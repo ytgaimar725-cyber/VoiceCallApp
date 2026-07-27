@@ -1,30 +1,29 @@
-name: Build and Publish CallApp EXE
+name: Build Windows Executable
 
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
+  workflow_dispatch: 
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: 8.0.x
+        dotnet-version: '8.0.x'
 
-    - name: Publish Standalone EXE
-      run: |
-        dotnet publish CallApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
+    - name: Compile Executable
+      run: dotnet publish CallApp.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishReadyToRun=true
 
-    - name: Upload CallApp EXE Artifact
+    - name: Upload App Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: CallApp-Windows-x64
-        path: ./publish/CallApp.exe
+        name: CallApp-EXE
+        path: bin/Release/net8.0/win-x64/publish/CallApp.exe
         retention-days: 1
