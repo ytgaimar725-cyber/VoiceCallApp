@@ -26,4 +26,3 @@ jobs:
       with:
         name: CallApp-EXE
         path: bin/Release/net8.0/win-x64/publish/CallApp.exe
-        retention-days: 1
