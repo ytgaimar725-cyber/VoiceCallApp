@@ -5,9 +5,6 @@ on:
     branches: [ "main" ]
   workflow_dispatch: 
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: windows-latest
@@ -22,22 +19,11 @@ jobs:
         dotnet-version: '8.0.x'
 
     - name: Compile Executable
-      run: dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishReadyToRun=true
+      run: dotnet publish CallApp.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishReadyToRun=true
 
-    - name: Publish to GitHub Releases
-      shell: pwsh
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        $exe = Get-ChildItem -Path "bin/Release" -Filter "*.exe" -Recurse | Select-Object -First 1
-        if (-not $exe) {
-            Write-Error "Could not find compiled .exe file."
-            exit 1
-        }
-        Write-Host "Found executable: $($exe.FullName)"
-        
-        # Delete old release tag if it exists
-        gh release delete latest --cleanup-tag -y 2>$null
-        
-        # Create release and upload EXE
-        gh release create latest "$($exe.FullName)" --title "Latest App Build" --notes "Download your executable below."
+    - name: Upload App Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: CallApp-EXE
+        path: bin/Release/net8.0/win-x64/publish/CallApp.exe
+        retention-days: 1
