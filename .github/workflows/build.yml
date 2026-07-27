@@ -1,4 +1,4 @@
-name: Build CallApp
+name: Build and Publish CallApp EXE
 
 on:
   push:
@@ -18,8 +18,12 @@ jobs:
       with:
         dotnet-version: 8.0.x
 
-    - name: Restore dependencies
-      run: dotnet restore
+    - name: Publish Standalone EXE
+      run: |
+        dotnet publish CallApp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
 
-    - name: Build Project
-      run: dotnet build --configuration Release --no-restore
+    - name: Upload CallApp EXE Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: CallApp-Windows-x64
+        path: ./publish/CallApp.exe
