@@ -10,7 +10,8 @@ namespace CallApp
 {
     public class MainForm : Form
     {
-        private const int PORT = 5050;
+        // Using a high-range port to avoid conflicts with system services
+        private const int PORT = 15050;
 
         private WaveInEvent? waveIn;
         private WaveOutEvent? waveOut;
@@ -183,16 +184,15 @@ namespace CallApp
                 waveOut.Init(waveProvider);
                 waveOut.Play();
 
-                // Setup LAN UDP Socket (Broadcast Enabled)
+                // Correct Socket Initialization Sequence
                 udpClient = new UdpClient();
                 udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                udpClient.ExclusiveAddressUse = false;
                 udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, PORT));
                 udpClient.EnableBroadcast = true;
 
                 IPEndPoint broadcastEndPoint = new IPEndPoint(IPAddress.Broadcast, PORT);
 
-                // Start Listening Task
+                // Start Receiving Audio
                 _ = Task.Run(() => ListenForLanAudio());
 
                 // Setup Mic Recording
@@ -201,7 +201,11 @@ namespace CallApp
                 {
                     if (isConnected && !isMuted && a.BytesRecorded > 0)
                     {
-                        try { udpClient.Send(a.Buffer, a.BytesRecorded, broadcastEndPoint); } catch { }
+                        try 
+                        { 
+                            udpClient.Send(a.Buffer, a.BytesRecorded, broadcastEndPoint); 
+                        } 
+                        catch { }
                     }
                 };
                 waveIn.StartRecording();
