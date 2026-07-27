@@ -10,7 +10,7 @@ namespace CallApp
 {
     public class MainForm : Form
     {
-        // Using a high-range port to avoid conflicts with system services
+        // High-range port to avoid conflicts with system services
         private const int PORT = 15050;
 
         private WaveInEvent? waveIn;
@@ -21,7 +21,7 @@ namespace CallApp
         private bool isMuted = false;
         private bool isDeafened = false;
 
-        // UI Colors (Discord Theme)
+        // Visual Colors (Discord Dark Theme)
         private readonly Color bgDark = Color.FromArgb(30, 31, 34);
         private readonly Color bgCard = Color.FromArgb(43, 45, 49);
         private readonly Color bgInput = Color.FromArgb(17, 18, 20);
@@ -29,6 +29,7 @@ namespace CallApp
         private readonly Color accentRed = Color.FromArgb(242, 63, 67);
         private readonly Color textColor = Color.FromArgb(242, 243, 245);
 
+        // UI Components
         private TextBox txtUsername = null!;
         private Button btnConnect = null!;
         private Button btnMute = null!;
@@ -51,7 +52,7 @@ namespace CallApp
             this.MaximizeBox = false;
             this.StartPosition = FormStartPosition.CenterScreen;
 
-            // Header Banner
+            // Top Header Panel
             Panel header = new Panel
             {
                 Dock = DockStyle.Top,
@@ -69,7 +70,7 @@ namespace CallApp
             header.Controls.Add(lblTitle);
             this.Controls.Add(header);
 
-            // User Profile Card
+            // User Profile Section
             Panel userCard = new Panel
             {
                 Location = new Point(20, 80),
@@ -77,8 +78,23 @@ namespace CallApp
                 BackColor = bgCard
             };
 
-            Label lblUsername = new Label { Text = "Your Display Name:", Location = new Point(15, 15), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
-            txtUsername = new TextBox { Location = new Point(15, 35), Width = 295, BackColor = bgInput, ForeColor = textColor, BorderStyle = BorderStyle.FixedSingle, Text = Environment.UserName };
+            Label lblUsername = new Label 
+            { 
+                Text = "Your Display Name:", 
+                Location = new Point(15, 15), 
+                AutoSize = true, 
+                Font = new Font("Segoe UI", 9, FontStyle.Bold) 
+            };
+            
+            txtUsername = new TextBox 
+            { 
+                Location = new Point(15, 35), 
+                Width = 295, 
+                BackColor = bgInput, 
+                ForeColor = textColor, 
+                BorderStyle = BorderStyle.FixedSingle, 
+                Text = Environment.UserName 
+            };
 
             btnConnect = new Button
             {
@@ -96,7 +112,7 @@ namespace CallApp
             userCard.Controls.AddRange(new Control[] { lblUsername, txtUsername, btnConnect });
             this.Controls.Add(userCard);
 
-            // Audio Controls Card
+            // Audio Controls Panel
             Panel voiceCard = new Panel
             {
                 Location = new Point(20, 205),
@@ -133,6 +149,7 @@ namespace CallApp
             };
             btnMute.FlatAppearance.BorderSize = 0;
             btnMute.Click += (s, e) => {
+                if (waveIn == null) return;
                 isMuted = !isMuted;
                 btnMute.Text = isMuted ? "🔇 Unmute" : "🎙️ Mute";
                 btnMute.BackColor = isMuted ? accentRed : bgDark;
@@ -178,13 +195,13 @@ namespace CallApp
             {
                 WaveFormat voiceFormat = new WaveFormat(16000, 16, 1);
 
-                // Setup Audio Player
+                // 1. Setup Audio Output Speaker
                 waveOut = new WaveOutEvent();
                 waveProvider = new BufferedWaveProvider(voiceFormat) { DiscardOnBufferOverflow = true };
                 waveOut.Init(waveProvider);
                 waveOut.Play();
 
-                // Correct Socket Initialization Sequence
+                // 2. Setup UDP Network Socket
                 udpClient = new UdpClient();
                 udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, PORT));
@@ -192,32 +209,63 @@ namespace CallApp
 
                 IPEndPoint broadcastEndPoint = new IPEndPoint(IPAddress.Broadcast, PORT);
 
-                // Start Receiving Audio
+                // Start Receiving Audio Thread
                 _ = Task.Run(() => ListenForLanAudio());
 
-                // Setup Mic Recording
-                waveIn = new WaveInEvent { WaveFormat = voiceFormat, BufferMilliseconds = 40 };
-                waveIn.DataAvailable += (s, a) =>
+                // 3. Optional Microphone Setup
+                if (WaveInEvent.DeviceCount > 0)
                 {
-                    if (isConnected && !isMuted && a.BytesRecorded > 0)
+                    try
                     {
-                        try 
-                        { 
-                            udpClient.Send(a.Buffer, a.BytesRecorded, broadcastEndPoint); 
-                        } 
-                        catch { }
-                    }
-                };
-                waveIn.StartRecording();
+                        waveIn = new WaveInEvent
+                        {
+                            DeviceNumber = 0,
+                            WaveFormat = voiceFormat,
+                            BufferMilliseconds = 40
+                        };
 
-                // UI Updates
+                        waveIn.DataAvailable += (s, a) =>
+                        {
+                            if (isConnected && !isMuted && a.BytesRecorded > 0)
+                            {
+                                try { udpClient.Send(a.Buffer, a.BytesRecorded, broadcastEndPoint); } catch { }
+                            }
+                        };
+
+                        waveIn.StartRecording();
+                    }
+                    catch
+                    {
+                        // Fallback to listen-only mode if opening microphone fails
+                        waveIn = null;
+                    }
+                }
+                else
+                {
+                    // No input device found
+                    waveIn = null;
+                }
+
+                // 4. Update UI State
                 isConnected = true;
                 btnConnect.Text = "Leave Voice Channel";
                 btnConnect.BackColor = accentRed;
-                lblStatus.Text = "Connected (Broadcasting)";
+                
+                if (waveIn != null)
+                {
+                    lblStatus.Text = "Connected (Mic Active)";
+                    btnMute.Enabled = true;
+                    btnMute.Text = "🎙️ Mute";
+                }
+                else
+                {
+                    lblStatus.Text = "Connected (Listen Only)";
+                    btnMute.Enabled = false;
+                    btnMute.Text = "🔇 No Mic";
+                }
+
                 lblStatus.ForeColor = accentGreen;
                 statusDot.BackColor = accentGreen;
-                btnMute.Enabled = true;
                 btnDeafen.Enabled = true;
                 txtUsername.Enabled = false;
             }
@@ -249,11 +297,17 @@ namespace CallApp
         private void EndLanCall()
         {
             isConnected = false;
+
             waveIn?.StopRecording();
             waveIn?.Dispose();
+            waveIn = null;
+
             waveOut?.Stop();
             waveOut?.Dispose();
+            waveOut = null;
+
             udpClient?.Close();
+            udpClient = null;
 
             btnConnect.Text = "Join Voice Channel";
             btnConnect.BackColor = accentGreen;
@@ -261,7 +315,13 @@ namespace CallApp
             lblStatus.ForeColor = Color.Gray;
             statusDot.BackColor = Color.Gray;
             btnMute.Enabled = false;
+            btnMute.Text = "🎙️ Mute";
+            btnMute.BackColor = bgDark;
             btnDeafen.Enabled = false;
+            btnDeafen.Text = "🎧 Deafen";
+            btnDeafen.BackColor = bgDark;
+            isMuted = false;
+            isDeafened = false;
             txtUsername.Enabled = true;
         }
 
