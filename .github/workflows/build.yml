@@ -1,8 +1,9 @@
-name: Build Windows Executable
+name: Build and Release Windows Executable
 
 on:
   push:
-    branches: [ "main" ]
+    tags:
+      - 'v*' # Triggers whenever you push a tag like v1.0, v1.1, etc.
   workflow_dispatch: 
 
 jobs:
@@ -21,9 +22,7 @@ jobs:
     - name: Compile Executable
       run: dotnet publish CallApp.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishReadyToRun=true
 
-    - name: Upload App Artifact
-      uses: actions/upload-artifact@v4
+    - name: Create Release and Upload EXE
+      uses: softprops/action-gh-release@v2
       with:
-        name: CallApp-EXE
-        path: bin/Release/net8.0/win-x64/publish/CallApp.exe
-        retention-days: 1
+        files: bin/Release/net8.0/win-x64/publish/CallApp.exe
