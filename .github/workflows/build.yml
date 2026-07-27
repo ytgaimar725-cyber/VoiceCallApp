@@ -27,3 +27,4 @@ jobs:
       with:
         name: CallApp-Windows-x64
         path: ./publish/CallApp.exe
+        retention-days: 1
