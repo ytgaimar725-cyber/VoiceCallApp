@@ -15,46 +15,54 @@ namespace CallApp
     public class MainForm : Form
     {
         private const int PORT = 15050;
-        private const byte HEADER_AUDIO = 0x01;
-        private const byte HEADER_HEARTBEAT = 0x02;
-        private const byte HEADER_LEAVE = 0x03;
+
+        // Packet Types
+        private const byte PACKET_HANDSHAKE = 0x01;
+        private const byte PACKET_AUDIO = 0x02;
+        private const byte PACKET_USER_LIST = 0x03;
 
         private WaveInEvent? waveIn;
         private WaveOutEvent? waveOut;
         private BufferedWaveProvider? waveProvider;
-        private UdpClient? udpClient;
+
+        // Network State
+        private TcpListener? tcpServer;
+        private TcpClient? tcpClient;
+        private NetworkStream? netStream;
+        private bool isHost = false;
         private bool isConnected = false;
         private bool isMuted = false;
         private bool isDeafened = false;
 
-        // Active Users Tracking
-        private readonly Dictionary<string, UserState> activeUsers = new Dictionary<string, UserState>();
-        private System.Windows.Forms.Timer? cleanupTimer;
-        private System.Windows.Forms.Timer? heartbeatTimer;
+        // Server Side Connections (Only used if Hosting)
+        private readonly List<ConnectedClient> serverClients = new List<ConnectedClient>();
 
-        // Visual Colors (Discord Dark Theme)
+        // UI Colors (Dark Theme with FamChat Orange Accents)
         private readonly Color bgDark = Color.FromArgb(30, 31, 34);
         private readonly Color bgCard = Color.FromArgb(43, 45, 49);
         private readonly Color bgInput = Color.FromArgb(17, 18, 20);
+        private readonly Color accentOrange = Color.FromArgb(255, 102, 0);
         private readonly Color accentGreen = Color.FromArgb(35, 165, 89);
         private readonly Color accentRed = Color.FromArgb(242, 63, 67);
         private readonly Color textColor = Color.FromArgb(242, 243, 245);
 
-        // UI Components
+        // UI Controls
         private TextBox txtUsername = null!;
+        private TextBox txtIpAddress = null!;
         private Button btnConnect = null!;
+        private Button btnHost = null!;
         private Button btnMute = null!;
         private Button btnDeafen = null!;
         private Label lblStatus = null!;
         private Panel statusDot = null!;
         private ListBox lstUsers = null!;
 
-        private class UserState
+        private class ConnectedClient
         {
+            public TcpClient Tcp { get; set; } = null!;
             public string Name { get; set; } = "";
             public bool HasMic { get; set; }
             public bool IsMuted { get; set; }
-            public DateTime LastSeen { get; set; }
         }
 
         public MainForm()
@@ -64,15 +72,15 @@ namespace CallApp
 
         private void SetupUI()
         {
-            this.Text = "Home LAN Voice Call";
-            this.Size = new Size(600, 440);
+            this.Text = "FamCall - Family Voice Server";
+            this.Size = new Size(620, 480);
             this.BackColor = bgDark;
             this.ForeColor = textColor;
             this.FormBorderStyle = FormBorderStyle.FixedSingle;
             this.MaximizeBox = false;
             this.StartPosition = FormStartPosition.CenterScreen;
 
-            // Top Header
+            // Header Banner
             Panel header = new Panel
             {
                 Dock = DockStyle.Top,
@@ -81,71 +89,75 @@ namespace CallApp
             };
             Label lblTitle = new Label
             {
-                Text = "🏠 Family Voice Channel",
+                Text = "📞 FAMCALL VOICE SERVER",
                 Font = new Font("Segoe UI", 14, FontStyle.Bold),
-                ForeColor = textColor,
+                ForeColor = accentOrange,
                 AutoSize = true,
                 Location = new Point(20, 18)
             };
             header.Controls.Add(lblTitle);
             this.Controls.Add(header);
 
-            // User Profile Section (Left Column)
-            Panel userCard = new Panel
+            // Left Setup Card
+            Panel setupCard = new Panel
             {
                 Location = new Point(20, 80),
-                Size = new Size(325, 110),
+                Size = new Size(340, 200),
                 BackColor = bgCard
             };
 
-            Label lblUsername = new Label { Text = "Your Display Name:", Location = new Point(15, 15), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
-            txtUsername = new TextBox { Location = new Point(15, 35), Width = 295, BackColor = bgInput, ForeColor = textColor, BorderStyle = BorderStyle.FixedSingle, Text = Environment.UserName };
+            Label lblUser = new Label { Text = "Set Your Display Name:", Location = new Point(15, 12), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+            txtUsername = new TextBox { Location = new Point(15, 32), Width = 310, BackColor = bgInput, ForeColor = textColor, BorderStyle = BorderStyle.FixedSingle, Text = Environment.UserName };
+
+            Label lblIp = new Label { Text = "Enter Host Computer IP Address:", Location = new Point(15, 65), AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+            txtIpAddress = new TextBox { Location = new Point(15, 85), Width = 310, BackColor = bgInput, ForeColor = textColor, BorderStyle = BorderStyle.FixedSingle, Text = "127.0.0.1" };
 
             btnConnect = new Button
             {
-                Text = "Join Voice Channel",
-                Location = new Point(15, 68),
-                Size = new Size(295, 32),
-                BackColor = accentGreen,
+                Text = "Connect to Family Voice Server",
+                Location = new Point(15, 120),
+                Size = new Size(310, 32),
+                BackColor = accentOrange,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10, FontStyle.Bold)
+                Font = new Font("Segoe UI", 9, FontStyle.Bold)
             };
             btnConnect.FlatAppearance.BorderSize = 0;
             btnConnect.Click += BtnConnect_Click;
 
-            userCard.Controls.AddRange(new Control[] { lblUsername, txtUsername, btnConnect });
-            this.Controls.Add(userCard);
+            btnHost = new Button
+            {
+                Text = "Host Voice Server Hub",
+                Location = new Point(15, 158),
+                Size = new Size(310, 28),
+                BackColor = bgDark,
+                ForeColor = accentOrange,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 8, FontStyle.Bold)
+            };
+            btnHost.FlatAppearance.BorderSize = 1;
+            btnHost.FlatAppearance.BorderColor = accentOrange;
+            btnHost.Click += BtnHost_Click;
 
-            // Audio Controls Panel (Left Column)
+            setupCard.Controls.AddRange(new Control[] { lblUser, txtUsername, lblIp, txtIpAddress, btnConnect, btnHost });
+            this.Controls.Add(setupCard);
+
+            // Audio Controls Panel (Bottom Left)
             Panel voiceCard = new Panel
             {
-                Location = new Point(20, 205),
-                Size = new Size(325, 175),
+                Location = new Point(20, 290),
+                Size = new Size(340, 130),
                 BackColor = bgCard
             };
 
-            statusDot = new Panel
-            {
-                Size = new Size(12, 12),
-                Location = new Point(20, 25),
-                BackColor = Color.Gray
-            };
-
-            lblStatus = new Label
-            {
-                Text = "Disconnected from LAN",
-                Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                Location = new Point(40, 22),
-                AutoSize = true,
-                ForeColor = Color.Gray
-            };
+            statusDot = new Panel { Size = new Size(12, 12), Location = new Point(15, 18), BackColor = Color.Gray };
+            lblStatus = new Label { Text = "Offline", Font = new Font("Segoe UI", 9, FontStyle.Bold), Location = new Point(35, 15), AutoSize = true, ForeColor = Color.Gray };
 
             btnMute = new Button
             {
                 Text = "🎙️ Mute",
-                Location = new Point(20, 60),
-                Size = new Size(135, 90),
+                Location = new Point(15, 45),
+                Size = new Size(145, 65),
                 BackColor = bgDark,
                 ForeColor = textColor,
                 FlatStyle = FlatStyle.Flat,
@@ -153,19 +165,13 @@ namespace CallApp
                 Enabled = false
             };
             btnMute.FlatAppearance.BorderSize = 0;
-            btnMute.Click += (s, e) => {
-                if (waveIn == null) return;
-                isMuted = !isMuted;
-                btnMute.Text = isMuted ? "🔇 Unmute" : "🎙️ Mute";
-                btnMute.BackColor = isMuted ? accentRed : bgDark;
-                SendHeartbeat();
-            };
+            btnMute.Click += BtnMute_Click;
 
             btnDeafen = new Button
             {
                 Text = "🎧 Deafen",
-                Location = new Point(170, 60),
-                Size = new Size(135, 90),
+                Location = new Point(180, 45),
+                Size = new Size(145, 65),
                 BackColor = bgDark,
                 ForeColor = textColor,
                 FlatStyle = FlatStyle.Flat,
@@ -182,27 +188,27 @@ namespace CallApp
             voiceCard.Controls.AddRange(new Control[] { statusDot, lblStatus, btnMute, btnDeafen });
             this.Controls.Add(voiceCard);
 
-            // Connected Users Side Panel (Right Column)
+            // Users List Panel (Right Column)
             Panel usersPanel = new Panel
             {
-                Location = new Point(365, 80),
-                Size = new Size(195, 300),
+                Location = new Point(380, 80),
+                Size = new Size(200, 340),
                 BackColor = bgCard
             };
 
             Label lblUsersHeader = new Label
             {
-                Text = "VOICE USERS — 0",
+                Text = "ROOM MEMBERS",
                 Font = new Font("Segoe UI", 8, FontStyle.Bold),
                 ForeColor = Color.DarkGray,
-                Location = new Point(10, 10),
+                Location = new Point(10, 12),
                 AutoSize = true
             };
 
             lstUsers = new ListBox
             {
-                Location = new Point(10, 30),
-                Size = new Size(175, 255),
+                Location = new Point(10, 35),
+                Size = new Size(180, 290),
                 BackColor = bgCard,
                 ForeColor = textColor,
                 BorderStyle = BorderStyle.None,
@@ -211,86 +217,85 @@ namespace CallApp
 
             usersPanel.Controls.AddRange(new Control[] { lblUsersHeader, lstUsers });
             this.Controls.Add(usersPanel);
+        }
 
-            // Timers for User Tracking
-            cleanupTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-            cleanupTimer.Tick += CleanupExpiredUsers;
+        private void BtnHost_Click(object? sender, EventArgs e)
+        {
+            try
+            {
+                tcpServer = new TcpListener(IPAddress.Any, PORT);
+                tcpServer.Start();
+                isHost = true;
 
-            heartbeatTimer = new System.Windows.Forms.Timer { Interval = 1000 };
-            heartbeatTimer.Tick += (s, e) => SendHeartbeat();
+                _ = Task.Run(() => AcceptIncomingClients());
+
+                // Auto-connect localhost to own server
+                txtIpAddress.Text = "127.0.0.1";
+                StartClientConnection("127.0.0.1");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not start Host Server: {ex.Message}", "FamCall Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void BtnConnect_Click(object? sender, EventArgs e)
         {
             if (!isConnected)
             {
-                StartLanCall();
+                StartClientConnection(txtIpAddress.Text.Trim());
             }
             else
             {
-                EndLanCall();
+                DisconnectCall();
             }
         }
 
-        private void StartLanCall()
+        private async void StartClientConnection(string hostIp)
         {
             try
             {
+                tcpClient = new TcpClient();
+                await tcpClient.ConnectAsync(hostIp, PORT);
+                netStream = tcpClient.GetStream();
+
                 WaveFormat voiceFormat = new WaveFormat(16000, 16, 1);
 
-                // 1. Setup Audio Output Speaker
+                // Audio Playback
                 waveOut = new WaveOutEvent();
                 waveProvider = new BufferedWaveProvider(voiceFormat) { DiscardOnBufferOverflow = true };
                 waveOut.Init(waveProvider);
                 waveOut.Play();
 
-                // 2. Setup UDP Network Socket
-                udpClient = new UdpClient();
-                udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, PORT));
-                udpClient.EnableBroadcast = true;
-
-                // Start Receiving Network Data
-                _ = Task.Run(() => ListenForLanPackets());
-
-                // 3. Optional Microphone Setup
+                // Optional Microphone
                 if (WaveInEvent.DeviceCount > 0)
                 {
                     try
                     {
-                        waveIn = new WaveInEvent
-                        {
-                            DeviceNumber = 0,
-                            WaveFormat = voiceFormat,
-                            BufferMilliseconds = 40
-                        };
-
+                        waveIn = new WaveInEvent { DeviceNumber = 0, WaveFormat = voiceFormat, BufferMilliseconds = 40 };
                         waveIn.DataAvailable += (s, a) =>
                         {
                             if (isConnected && !isMuted && a.BytesRecorded > 0)
                             {
-                                SendAudioChunk(a.Buffer, a.BytesRecorded);
+                                SendPacket(PACKET_AUDIO, a.Buffer, a.BytesRecorded);
                             }
                         };
-
                         waveIn.StartRecording();
                     }
-                    catch
-                    {
-                        waveIn = null;
-                    }
+                    catch { waveIn = null; }
                 }
 
-                // 4. Update UI & Timers
                 isConnected = true;
-                btnConnect.Text = "Leave Voice Channel";
+                btnConnect.Text = "Disconnect";
                 btnConnect.BackColor = accentRed;
-                
+                btnHost.Enabled = false;
+                txtUsername.Enabled = false;
+                txtIpAddress.Enabled = false;
+
                 if (waveIn != null)
                 {
-                    lblStatus.Text = "Connected (Mic Active)";
+                    lblStatus.Text = isHost ? "Hosting & Connected" : "Connected (Mic Active)";
                     btnMute.Enabled = true;
-                    btnMute.Text = "🎙️ Mute";
                 }
                 else
                 {
@@ -302,178 +307,248 @@ namespace CallApp
                 lblStatus.ForeColor = accentGreen;
                 statusDot.BackColor = accentGreen;
                 btnDeafen.Enabled = true;
-                txtUsername.Enabled = false;
 
-                heartbeatTimer?.Start();
-                cleanupTimer?.Start();
-                SendHeartbeat();
+                // Send Handshake
+                SendHandshake();
+
+                // Listen for Server Packets
+                _ = Task.Run(() => ReadClientNetworkStream());
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not start LAN voice: {ex.Message}", "CallApp Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Failed to connect to server: {ex.Message}", "FamCall Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void SendAudioChunk(byte[] audioData, int length)
+        private void SendHandshake()
         {
-            if (udpClient == null) return;
+            byte[] nameBytes = Encoding.UTF8.GetBytes(txtUsername.Text.Trim());
+            byte[] payload = new byte[2 + nameBytes.Length];
+            payload[0] = (byte)(waveIn != null ? 1 : 0);
+            payload[1] = (byte)(isMuted ? 1 : 0);
+            Array.Copy(nameBytes, 0, payload, 2, nameBytes.Length);
+
+            SendPacket(PACKET_HANDSHAKE, payload, payload.Length);
+        }
+
+        private void BtnMute_Click(object? sender, EventArgs e)
+        {
+            if (waveIn == null) return;
+            isMuted = !isMuted;
+            btnMute.Text = isMuted ? "🔇 Unmute" : "🎙️ Mute";
+            btnMute.BackColor = isMuted ? accentRed : bgDark;
+            SendHandshake();
+        }
+
+        private void SendPacket(byte type, byte[] data, int length)
+        {
+            if (netStream == null || !netStream.CanWrite) return;
             try
             {
-                byte[] packet = new byte[length + 1];
-                packet[0] = HEADER_AUDIO;
-                Array.Copy(audioData, 0, packet, 1, length);
-                IPEndPoint ep = new IPEndPoint(IPAddress.Broadcast, PORT);
-                udpClient.Send(packet, packet.Length, ep);
+                byte[] lengthBytes = BitConverter.GetBytes((ushort)(length + 1));
+                byte[] packet = new byte[2 + 1 + length];
+                Array.Copy(lengthBytes, 0, packet, 0, 2);
+                packet[2] = type;
+                Array.Copy(data, 0, packet, 3, length);
+
+                lock (netStream)
+                {
+                    netStream.Write(packet, 0, packet.Length);
+                }
             }
             catch { }
         }
 
-        private void SendHeartbeat()
+        private async Task ReadClientNetworkStream()
         {
-            if (!isConnected || udpClient == null) return;
-            try
-            {
-                byte[] nameBytes = Encoding.UTF8.GetBytes(txtUsername.Text.Trim());
-                byte[] packet = new byte[3 + nameBytes.Length];
-                packet[0] = HEADER_HEARTBEAT;
-                packet[1] = (byte)(waveIn != null ? 1 : 0);
-                packet[2] = (byte)(isMuted ? 1 : 0);
-                Array.Copy(nameBytes, 0, packet, 3, nameBytes.Length);
-
-                IPEndPoint ep = new IPEndPoint(IPAddress.Broadcast, PORT);
-                udpClient.Send(packet, packet.Length, ep);
-            }
-            catch { }
-        }
-
-        private void SendLeavePacket()
-        {
-            if (udpClient == null) return;
-            try
-            {
-                byte[] nameBytes = Encoding.UTF8.GetBytes(txtUsername.Text.Trim());
-                byte[] packet = new byte[1 + nameBytes.Length];
-                packet[0] = HEADER_LEAVE;
-                Array.Copy(nameBytes, 0, packet, 1, nameBytes.Length);
-
-                IPEndPoint ep = new IPEndPoint(IPAddress.Broadcast, PORT);
-                udpClient.Send(packet, packet.Length, ep);
-            }
-            catch { }
-        }
-
-        private async Task ListenForLanPackets()
-        {
-            while (isConnected && udpClient != null)
+            byte[] headerBuffer = new byte[3];
+            while (isConnected && netStream != null)
             {
                 try
                 {
-                    UdpReceiveResult result = await udpClient.ReceiveAsync();
-                    byte[] data = result.Buffer;
-                    if (data.Length < 1) continue;
+                    int read = await ReadExactAsync(netStream, headerBuffer, 3);
+                    if (read < 3) break;
 
-                    byte packetType = data[0];
+                    ushort packetSize = BitConverter.ToUInt16(headerBuffer, 0);
+                    byte packetType = headerBuffer[2];
+                    int payloadSize = packetSize - 1;
 
-                    if (packetType == HEADER_AUDIO)
+                    byte[] payload = new byte[payloadSize];
+                    if (await ReadExactAsync(netStream, payload, payloadSize) < payloadSize) break;
+
+                    if (packetType == PACKET_AUDIO && !isDeafened && waveProvider != null)
                     {
-                        if (!isDeafened && waveProvider != null)
-                        {
-                            waveProvider.AddSamples(data, 1, data.Length - 1);
-                        }
+                        waveProvider.AddSamples(payload, 0, payload.Length);
                     }
-                    else if (packetType == HEADER_HEARTBEAT && data.Length >= 3)
+                    else if (packetType == PACKET_USER_LIST)
                     {
-                        bool hasMic = data[1] == 1;
-                        bool muted = data[2] == 1;
-                        string username = Encoding.UTF8.GetString(data, 3, data.Length - 3);
-
-                        UpdateUserList(username, hasMic, muted);
-                    }
-                    else if (packetType == HEADER_LEAVE && data.Length > 1)
-                    {
-                        string username = Encoding.UTF8.GetString(data, 1, data.Length - 1);
-                        RemoveUser(username);
+                        string rawList = Encoding.UTF8.GetString(payload);
+                        UpdateUserListUI(rawList);
                     }
                 }
-                catch
+                catch { break; }
+            }
+
+            if (isConnected) DisconnectCall();
+        }
+
+        private async Task<int> ReadExactAsync(Stream stream, byte[] buffer, int count)
+        {
+            int total = 0;
+            while (total < count)
+            {
+                int read = await stream.ReadAsync(buffer, total, count - total);
+                if (read == 0) break;
+                total += read;
+            }
+            return total;
+        }
+
+        // ================= SERVER HUB LOGIC =================
+        private async Task AcceptIncomingClients()
+        {
+            while (isHost && tcpServer != null)
+            {
+                try
                 {
-                    break;
+                    TcpClient client = await tcpServer.AcceptTcpClientAsync();
+                    ConnectedClient cc = new ConnectedClient { Tcp = client };
+                    lock (serverClients) { serverClients.Add(cc); }
+                    _ = Task.Run(() => HandleServerClient(cc));
+                }
+                catch { break; }
+            }
+        }
+
+        private async Task HandleServerClient(ConnectedClient client)
+        {
+            NetworkStream stream = client.Tcp.GetStream();
+            byte[] headerBuffer = new byte[3];
+
+            try
+            {
+                while (isHost)
+                {
+                    int read = await ReadExactAsync(stream, headerBuffer, 3);
+                    if (read < 3) break;
+
+                    ushort packetSize = BitConverter.ToUInt16(headerBuffer, 0);
+                    byte packetType = headerBuffer[2];
+                    int payloadSize = packetSize - 1;
+
+                    byte[] payload = new byte[payloadSize];
+                    if (await ReadExactAsync(stream, payload, payloadSize) < payloadSize) break;
+
+                    if (packetType == PACKET_HANDSHAKE && payloadSize >= 2)
+                    {
+                        client.HasMic = payload[0] == 1;
+                        client.IsMuted = payload[1] == 1;
+                        client.Name = Encoding.UTF8.GetString(payload, 2, payloadSize - 2);
+                        BroadcastServerUserList();
+                    }
+                    else if (packetType == PACKET_AUDIO)
+                    {
+                        // Relay audio packet to all other clients
+                        RelayAudioToOthers(client, payload);
+                    }
+                }
+            }
+            catch { }
+
+            lock (serverClients) { serverClients.Remove(client); }
+            BroadcastServerUserList();
+        }
+
+        private void RelayAudioToOthers(ConnectedClient sender, byte[] audio)
+        {
+            lock (serverClients)
+            {
+                foreach (var c in serverClients.ToList())
+                {
+                    if (c != sender && c.Tcp.Connected)
+                    {
+                        try
+                        {
+                            NetworkStream ns = c.Tcp.GetStream();
+                            byte[] lengthBytes = BitConverter.GetBytes((ushort)(audio.Length + 1));
+                            byte[] packet = new byte[2 + 1 + audio.Length];
+                            Array.Copy(lengthBytes, 0, packet, 0, 2);
+                            packet[2] = PACKET_AUDIO;
+                            Array.Copy(audio, 0, packet, 3, audio.Length);
+
+                            lock (ns) { ns.Write(packet, 0, packet.Length); }
+                        }
+                        catch { }
+                    }
                 }
             }
         }
 
-        private void UpdateUserList(string username, bool hasMic, bool isMuted)
+        private void BroadcastServerUserList()
+        {
+            List<string> userEntries = new List<string>();
+            lock (serverClients)
+            {
+                foreach (var c in serverClients)
+                {
+                    if (!string.IsNullOrEmpty(c.Name))
+                    {
+                        string icon = "🟢";
+                        if (!c.HasMic) icon = "🎧";
+                        else if (c.IsMuted) icon = "🔇";
+                        userEntries.Add($"{icon} {c.Name}");
+                    }
+                }
+            }
+
+            string serialized = string.Join(";", userEntries);
+            byte[] payload = Encoding.UTF8.GetBytes(serialized);
+
+            lock (serverClients)
+            {
+                foreach (var c in serverClients.ToList())
+                {
+                    if (c.Tcp.Connected)
+                    {
+                        try
+                        {
+                            NetworkStream ns = c.Tcp.GetStream();
+                            byte[] lengthBytes = BitConverter.GetBytes((ushort)(payload.Length + 1));
+                            byte[] packet = new byte[2 + 1 + payload.Length];
+                            Array.Copy(lengthBytes, 0, packet, 0, 2);
+                            packet[2] = PACKET_USER_LIST;
+                            Array.Copy(payload, 0, packet, 3, payload.Length);
+
+                            lock (ns) { ns.Write(packet, 0, packet.Length); }
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+
+        private void UpdateUserListUI(string rawList)
         {
             if (this.InvokeRequired)
             {
-                this.Invoke(new Action(() => UpdateUserList(username, hasMic, isMuted)));
+                this.Invoke(new Action(() => UpdateUserListUI(rawList)));
                 return;
             }
 
-            activeUsers[username] = new UserState
-            {
-                Name = username,
-                HasMic = hasMic,
-                IsMuted = isMuted,
-                LastSeen = DateTime.Now
-            };
-
-            RefreshUserListUI();
-        }
-
-        private void RemoveUser(string username)
-        {
-            if (this.InvokeRequired)
-            {
-                this.Invoke(new Action(() => RemoveUser(username)));
-                return;
-            }
-
-            if (activeUsers.ContainsKey(username))
-            {
-                activeUsers.Remove(username);
-                RefreshUserListUI();
-            }
-        }
-
-        private void CleanupExpiredUsers(object? sender, EventArgs e)
-        {
-            DateTime cutoff = DateTime.Now.AddSeconds(-3);
-            var expired = activeUsers.Where(kvp => kvp.Value.LastSeen < cutoff).Select(kvp => kvp.Key).ToList();
-
-            foreach (var key in expired)
-            {
-                activeUsers.Remove(key);
-            }
-
-            if (expired.Count > 0)
-            {
-                RefreshUserListUI();
-            }
-        }
-
-        private void RefreshUserListUI()
-        {
             lstUsers.Items.Clear();
-            foreach (var user in activeUsers.Values)
-            {
-                string statusIcon = "🟢";
-                if (!user.HasMic) statusIcon = "🎧";
-                else if (user.IsMuted) statusIcon = "🔇";
+            if (string.IsNullOrWhiteSpace(rawList)) return;
 
-                string isSelf = user.Name == txtUsername.Text.Trim() ? " (You)" : "";
-                lstUsers.Items.Add($"{statusIcon} {user.Name}{isSelf}");
+            string[] items = rawList.Split(';');
+            foreach (var item in items)
+            {
+                string isSelf = item.EndsWith($" {txtUsername.Text.Trim()}") ? " (You)" : "";
+                lstUsers.Items.Add($"{item}{isSelf}");
             }
         }
 
-        private void EndLanCall()
+        private void DisconnectCall()
         {
             isConnected = false;
-
-            heartbeatTimer?.Stop();
-            cleanupTimer?.Stop();
-
-            SendLeavePacket();
 
             waveIn?.StopRecording();
             waveIn?.Dispose();
@@ -483,15 +558,20 @@ namespace CallApp
             waveOut?.Dispose();
             waveOut = null;
 
-            udpClient?.Close();
-            udpClient = null;
+            netStream?.Dispose();
+            tcpClient?.Close();
 
-            activeUsers.Clear();
-            lstUsers.Items.Clear();
+            if (isHost)
+            {
+                isHost = false;
+                tcpServer?.Stop();
+                lock (serverClients) { serverClients.Clear(); }
+            }
 
-            btnConnect.Text = "Join Voice Channel";
-            btnConnect.BackColor = accentGreen;
-            lblStatus.Text = "Disconnected from LAN";
+            btnConnect.Text = "Connect to Family Voice Server";
+            btnConnect.BackColor = accentOrange;
+            btnHost.Enabled = true;
+            lblStatus.Text = "Offline";
             lblStatus.ForeColor = Color.Gray;
             statusDot.BackColor = Color.Gray;
             btnMute.Enabled = false;
@@ -500,14 +580,14 @@ namespace CallApp
             btnDeafen.Enabled = false;
             btnDeafen.Text = "🎧 Deafen";
             btnDeafen.BackColor = bgDark;
-            isMuted = false;
-            isDeafened = false;
             txtUsername.Enabled = true;
+            txtIpAddress.Enabled = true;
+            lstUsers.Items.Clear();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            EndLanCall();
+            DisconnectCall();
             base.OnFormClosing(e);
         }
     }
