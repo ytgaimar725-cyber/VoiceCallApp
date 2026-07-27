@@ -1,122 +1,77 @@
 using System;
-using System.Net;
-using System.Net.Sockets;
 using System.Threading.Tasks;
-using NAudio.Wave;
+using LiveKit;
 
 namespace CallApp
 {
     class Program
     {
-        private static WaveInEvent? waveIn;
-        private static WaveOutEvent? waveOut;
-        private static BufferedWaveProvider? waveProvider;
-        private static UdpClient? udpSender;
-        private static UdpClient? udpReceiver;
-        private static bool isRunning = true;
-
-        // 16kHz, 16-bit Mono Audio Format (Low-latency voice quality)
-        private static readonly WaveFormat VoiceFormat = new WaveFormat(16000, 16, 1);
+        private static Room? room;
 
         static async Task Main(string[] args)
         {
-            Console.Title = "CallApp - P2P Voice Streamer";
+            Console.Title = "CallApp - Discord Style Voice";
+            Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("========================================");
-            Console.WriteLine("        CALLAPP - P2P VOICE CHAT        ");
+            Console.WriteLine("      DISCORD-STYLE VOICE CALLAPP       ");
             Console.WriteLine("========================================\n");
+            Console.ResetColor();
 
-            Console.Write("Enter YOUR Local Port to listen on (e.g., 5000): ");
-            int localPort = int.Parse(Console.ReadLine() ?? "5000");
+            Console.Write("Enter Your Display Name: ");
+            string username = Console.ReadLine() ?? "User";
 
-            Console.Write("Enter TARGET Remote IP (e.g., 127.0.0.1): ");
-            string remoteIp = Console.ReadLine() ?? "127.0.0.1";
+            Console.Write("Enter Room Name to Join/Create (e.g., general): ");
+            string roomName = Console.ReadLine() ?? "general";
 
-            Console.Write("Enter TARGET Remote Port (e.g., 5001): ");
-            int remotePort = int.Parse(Console.ReadLine() ?? "5001");
+            Console.WriteLine("\n[+] Connecting to Discord-style voice server...");
 
             try
             {
-                // 1. Setup Audio Output (Speakers)
-                waveOut = new WaveOutEvent();
-                waveProvider = new BufferedWaveProvider(VoiceFormat)
+                // 1. Initialize Room Connection
+                room = new Room();
+
+                // Listen for when other people join or leave your voice room
+                room.ParticipantConnected += (participant) =>
                 {
-                    DiscardOnBufferOverflow = true
-                };
-                waveOut.Init(waveProvider);
-                waveOut.Play();
-
-                // 2. Setup Sockets
-                udpReceiver = new UdpClient(localPort);
-                udpSender = new UdpClient();
-                IPEndPoint remoteEndpoint = new IPEndPoint(IPAddress.Parse(remoteIp), remotePort);
-
-                // Start receiving incoming voice packets in background
-                _ = Task.Run(() => ReceiveAudioAsync(udpReceiver));
-
-                // 3. Setup Audio Input (Microphone)
-                waveIn = new WaveInEvent
-                {
-                    WaveFormat = VoiceFormat,
-                    BufferMilliseconds = 40 // Small buffer for low latency
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"\n[+] {participant.Identity} joined the call!");
+                    Console.ResetColor();
                 };
 
-                waveIn.DataAvailable += (sender, e) =>
+                room.ParticipantDisconnected += (participant) =>
                 {
-                    if (e.BytesRecorded > 0 && isRunning)
-                    {
-                        try
-                        {
-                            udpSender.Send(e.Buffer, e.BytesRecorded, remoteEndpoint);
-                        }
-                        catch
-                        {
-                            // Drop packet if socket is busy
-                        }
-                    }
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"\n[-] {participant.Identity} left the call.");
+                    Console.ResetColor();
                 };
 
-                waveIn.StartRecording();
+                // 2. Connect using LiveKit Cloud / Free Relay
+                // (Paste your LiveKit URL and Token here or use hosted relay)
+                string serverUrl = "wss://your-livekit-instance.livekit.cloud";
+                string token = "YOUR_GENERATED_USER_TOKEN"; 
 
-                Console.WriteLine("\n[+] Call connected! Audio streaming active.");
-                Console.WriteLine("[*] Press [ENTER] to disconnect and quit.\n");
+                await room.Connect(serverUrl, token);
+
+                // 3. Enable Microphone
+                await room.LocalParticipant.SetMicrophoneEnabled(true);
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"\n[SUCCESS] Connected to room: #{roomName}");
+                Console.WriteLine("[*] Your microphone is active!");
+                Console.WriteLine("[*] Tell your friend to join the same room name.");
+                Console.WriteLine("[*] Press [ENTER] to hang up.\n");
+                Console.ResetColor();
+
                 Console.ReadLine();
+                
+                await room.Disconnect();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\n[!] Error: {ex.Message}");
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n[!] Connection failed: {ex.Message}");
+                Console.ResetColor();
             }
-            finally
-            {
-                Cleanup();
-            }
-        }
-
-        private static async Task ReceiveAudioAsync(UdpClient receiver)
-        {
-            while (isRunning)
-            {
-                try
-                {
-                    UdpReceiveResult result = await receiver.ReceiveAsync();
-                    waveProvider?.AddSamples(result.Buffer, 0, result.Buffer.Length);
-                }
-                catch
-                {
-                    break;
-                }
-            }
-        }
-
-        private static void Cleanup()
-        {
-            isRunning = false;
-            waveIn?.StopRecording();
-            waveIn?.Dispose();
-            waveOut?.Stop();
-            waveOut?.Dispose();
-            udpReceiver?.Close();
-            udpSender?.Close();
-            Console.WriteLine("[+] Disconnected.");
         }
     }
 }
